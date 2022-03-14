@@ -45691,3 +45691,30 @@ Warning message:
 In write.csv(table_out, file = "/var/rprojects/Projects/AireAD/table_errors.csv",  :
   attempt to set 'append' ignored
 [1] "Error: New file not found"
+sourcing Project-specific .Rprofile
+retrieve the top-level Project directory at any time with PROJHOME or via get("PROJHOME", "RPROJ"):
+ /var/rprojects/RScripts 
+
+Attaching package: ‘lubridate’
+
+The following objects are masked from ‘package:base’:
+
+    date, intersect, setdiff, union
+
+
+Attaching package: ‘dplyr’
+
+The following objects are masked from ‘package:stats’:
+
+    filter, lag
+
+The following objects are masked from ‘package:base’:
+
+    intersect, setdiff, setequal, union
+
+[1] "New file found"
+[1] "OK!"
+Warning message:
+In write.csv(table_out, file = "/var/rprojects/Projects/AireAD/table_errors.csv",  :
+  attempt to set 'append' ignored
+[1] "Error: New file not found"
