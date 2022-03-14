@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<rss>
+  <channel>
+    <title>Qualitat de l'Aire a Andorra - &#xFA;ltimes dades</title>
+    <link>http://www.aire.ad/</link>
+    <language>ca</language>
+    <copyright>(c) 4sfera Innova SL</copyright>
+    <webMaster>unitat_medi_atmosferic@govern.ad</webMaster>
+    <lastBuildDate>2022-03-11 08:19:41</lastBuildDate>
+    <image>
+      <url>http://www.aire.ad/images/mediambient_logo.gif</url>
+      <title>Qualitat de l'Aire a Andorra</title>
+      <link>http://www.aire.ad/</link>
+    </image>
+    <item>
+      <title>&#xCD;ndex global de qualitat de l'aire a Andorra</title>
+      <link>http://www.aire.ad/index.php</link>
+      <description>La qualitat de l'aire &#xE9;s Bona - &#xED;ndex 2/6</description>
+      <pubDate>2022-03-11 08:00:00</pubDate>
+    </item>
+    <item>
+      <title>Escaldes-Engordany</title>
+      <link>http://www.aire.ad/#site_id=942&amp;t_action=data</link>
+      <description>La qualitat de l'aire &#xE9;s Bona - &#xED;ndex 2/6</description>
+      <pubDate>2022-03-11 08:00:00</pubDate>
+    </item>
+    <item>
+      <title>Engolasters</title>
+      <link>http://www.aire.ad/#site_id=944&amp;t_action=data</link>
+      <description>La qualitat de l'aire &#xE9;s Bona - &#xED;ndex 2/6</description>
+      <pubDate>2022-03-11 08:00:00</pubDate>
+    </item>
+    <item>
+      <title>Sud R&#xE0;dio</title>
+      <link>http://www.aire.ad/#site_id=945&amp;t_action=data</link>
+      <description>La qualitat de l'aire &#xE9;s - - &#xED;ndex 0/6</description>
+      <pubDate>2022-03-11 08:00:00</pubDate>
+    </item>
+  </channel>
+</rss>
