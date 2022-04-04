@@ -2,10 +2,10 @@
 # Author: Cristina Carnerero
 # Date: 16/12/2021
 
+#TODO null: -9900
 
 #TODO filtrar al calendari quan la mobil no estigui operativa
 
-#TODO check: podem indexar una taula de postgres des de R?
 
 update_raven <- function(){
   ptm <- proc.time() #start counting time
@@ -40,6 +40,8 @@ update_raven <- function(){
   margin_old_data = 3 #number of hours
   
   hour_tweet = 8 #local time
+  
+  add_old_obs = FALSE
   # ---
   
   
@@ -96,35 +98,47 @@ update_raven <- function(){
   con <- dbConnect(RPostgres::Postgres(),dbname=database,host=host,port=port,user=user,password=pwd)
   
   #get data from some of the tables
-  stations <- dbReadTable(con,"stations")
-  observing_capabilities <- dbReadTable(con,"observing_capabilities")
+  # stations <- dbReadTable(con,"stations")
   
   
   #MAIN----
   #.Get data from hourly Andorra.txt file ----
   # load hourly data processed from ftp files
-  Andorra_hourly <- readRDS(AD_hourly_RDS)
+  # Andorra_hourly <- readRDS(AD_hourly_RDS)
+  table5 <- readRDS(AD_hourly_RDS)
   
   
   # drop duplicated rows when there is a value for the same date
-  table5 <- Andorra_hourly %>% group_by(end_position) %>% 
-                               group_by(sampling_point_id,.add=T) %>% 
-                               slice(which.max(!is.na(value)))
+  # table5 <- Andorra_hourly %>% group_by(end_position) %>% 
+  #                              group_by(sampling_point_id,.add=T) %>% 
+  #                              slice(which.max(!is.na(value)))
   
   
+  if(add_old_obs){
+    # add old data from observations
+    observing_capabilities <- dbReadTable(con,"observing_capabilities")
+    
+    df_obs <- dbReadTable(con, "observations") %>% select(-id)
+    df_obs[df_obs$value==-999,"value"] <- NA
+    df_obs[df_obs$import_value==-999,"import_value"] <- NA
+    df_obs[df_obs$value==-9900,"value"] <- NA
+    df_obs[df_obs$import_value==-9900,"import_value"] <- NA
+    
   
-  # add old data from observations
-  df_obs <- dbReadTable(con, "observations") %>% select(-id)
-  df_obs[df_obs$value==-999,"value"] <- NA
-  df_obs[df_obs$import_value==-999,"import_value"] <- NA
-  
-
-  df <- df_obs %>% full_join(table5)
+    df <- df_obs %>% full_join(table5)
+  }else{
+    df <- table5
+    
+    rm(Andorra_hourly)
+    
+  }
   
   # keep validated data in case of duplication
-  df <- df %>% group_by(end_position) %>%
+  df <- df %>% 
+    group_by(end_position) %>%
     group_by(sampling_point_id,.add=T) %>%
-    slice(which.min(!is.na(verification_flag)))
+    # slice(which.min(!is.na(verification_flag)))
+    dplyr::filter(verification_flag==min(verification_flag))
   
   df <- distinct(df)
   table5 <- df
@@ -134,7 +148,7 @@ update_raven <- function(){
   
   dbWriteTable(con,"web_observations",table5,overwrite=TRUE)
   
-  #--check
+
   
   
   #.Process from web_observations ----
@@ -249,9 +263,7 @@ update_raven <- function(){
   #...Global AQI ----
   # global AQI is the max of all columns except date and station
   index_poll$aqi <- apply(index_poll[,-c(1,2)],1,max,na.rm=TRUE)
-  # remove infinites (when all indexes are NA)
-  # index_poll <- index_poll %>% dplyr::filter_at(vars(aqi), all_vars(is.finite(.)))
-  
+
   # replace -inf for NAs
   index_poll[index_poll==-Inf] <- NA
   
@@ -295,16 +307,19 @@ update_raven <- function(){
     select(-value)
   
   # date is end_time in UTC+1
-  last_index <- index_poll %>% group_by(station) %>% 
-                               slice_max(date) %>%
-                               full_join(last_obs) %>%
-                               select(-c(starts_with("aqi"),culprit))
-                               # mutate_if(is.numeric, floor)  #indexes as lowest integers
+  last_index <- index_poll %>% 
+     group_by(station) %>% 
+     slice_max(date) %>%
+     full_join(last_obs) %>%
+     select(-c(starts_with("aqi"),culprit)) %>%
+     dplyr::filter(date==max(index_poll$date))
+     # mutate_if(is.numeric, floor)  #indexes as lowest integers
   
-  table1 <- last_index %>% pivot_longer(.,cols = unique(df_all$pollutant),
-                                        names_to = "pollutant",
-                                        values_to = "concentration") %>%
-                           select(date,station,pollutant,concentration)
+  table1 <- last_index %>% 
+    pivot_longer(.,cols = unique(df_all$pollutant),
+                                names_to = "pollutant",
+                                values_to = "concentration") %>%
+    select(date,station,pollutant,concentration)
   
   # add index and bands as columns
   for(pol in unique(df_all$pollutant)){
@@ -350,7 +365,7 @@ update_raven <- function(){
   table1$index[is.na(table1$index)] <- "-"
   
   
-  #change from UTC+1 to local time (taking into account winter/summer time)
+  # change from UTC+1 to local time (taking into account winter/summer time)
   table1$date <- with_tz(ymd_hms(table1$date,tz="Etc/GMT-1"),"Europe/Andorra")
   
   
@@ -448,9 +463,18 @@ update_raven <- function(){
   
   #...3: Map: Global index per station ----
   #get only latest data of all available data (the map should show info of the same time for all stations)
-  table3 <- index_poll %>% 
-    dplyr::filter(date==format(max(index_poll$date),"%Y-%m-%d %H:%M:%S")) %>%
+  #TODO CHECK!!! this was making the map take the data from the previous hour
+  # table3 <- index_poll %>% 
+  #   dplyr::filter(date==format(max(index_poll$date),"%Y-%m-%d %H:%M:%S")) %>%
+  #   select(date,station,starts_with(c("aqi","aqi_band")),aqi_color)
+  
+  table3 <- index_poll %>%
+    dplyr::filter(date==max(index_poll$date)) %>%
     select(date,station,starts_with(c("aqi","aqi_band")),aqi_color)
+  
+  
+  # change from UTC+1 to local time (taking into account winter/summer time)
+  table3$date <- with_tz(ymd_hms(table3$date,tz="Etc/GMT-1"),"Europe/Andorra")
   
   
   #replace NAs with "-" or 0
@@ -483,9 +507,7 @@ update_raven <- function(){
   names(table3)[names(table3)=="station"] <- "station_id"
   table3 <- table3 %>% select(station_id,everything())
   
-  #change from UTC+1 to local time (taking into account winter/summer time)
-  table3$date <- with_tz(ymd_hms(table3$date,tz="Etc/GMT-1"),"Europe/Andorra")
-  
+
   
   # break table in two to separate translations
   table3_common <- table3 %>% select(everything(),-starts_with("aqi_band"))
@@ -503,52 +525,39 @@ update_raven <- function(){
   table3_lang <- lang_to_locale(table3_lang)
   
   
-  #...4: Episodes ----
-  #TODO
-  #FIXME
-  if(FALSE){
-    episodes_messages <- read.xlsx(Andorra_info_file,'web_episodes')
-    
-    #TODO check if last_index$pollutant exceeds episodes_messages$threshold
-    # if TRUE then assign message_html_CAT/EN/FR
-    episodes <- last_index %>% select(-starts_with("index"))
-    
-    for(pol in colnames(episodes)[-c(1,2)]){
-      if(pol %in% episodes_messages$pollutant){
-        if(episodes[pol] >= episodes_messages[episodes_messages$pollutant==pol,'threshold']){
-          # episodes$message_CAT <- episodes_messages$message_html_CAT
-          episodes$message_CAT <- episodes_messages[pol,'message_html_CAT']
-        }
-        # episodes$episode <- episodes[pol] >= episodes_messages[episodes_messages$pollutant==pol,'threshold']
-      }
-    }
-  }
+
   
   
   #...5: Graph ----
   # filter last N days and not include meteo
   
+
   ptm <- proc.time()
   N_days = 30
   
-  table5_graph <- table5 %>% dplyr::mutate(end_position = as.POSIXct(end_position,"%Y-%m-%dT%H:00:00+01:00",tz="Etc/GMT-1"))
-  proc.time()-ptm
+  # table5_graph <- table5 %>% dplyr::mutate(end_position = as.POSIXct(end_position,"%Y-%m-%dT%H:00:00+01:00",tz="Etc/GMT-1"))
+  # proc.time()-ptm
   
   N_days_ago <- now(tzone="Etc/GMT-1")-ddays(N_days)
   
-  table5_graph <- table5_graph %>%
-    dplyr::filter(end_position>=N_days_ago) %>%
-    dplyr::filter(substr(sampling_point_id,13,nchar(sampling_point_id))<9000) %>%
-    dplyr::mutate(end_position = format.Date(end_position,"%Y-%m-%dT%H:%M:%S+01:00"))
+  table5_graph <- table5 %>%
+    dplyr::filter(to_time>=N_days_ago) %>%
+    dplyr::filter(substr(sampling_point_id,13,nchar(sampling_point_id))<9000)
+  
+  # table5_graph <- table5_graph %>%
+  #   dplyr::filter(end_position>=N_days_ago) %>%
+  #   dplyr::filter(substr(sampling_point_id,13,nchar(sampling_point_id))<9000) %>%
+  #   dplyr::mutate(end_position = format.Date(end_position,"%Y-%m-%dT%H:%M:%S+01:00"))
   proc.time()-ptm
   
+  #FIXME from_time, to_time
   
-  #change from UTC+1 to local time (taking into account winter/summer time)
+  # change from UTC+1 to local time (taking into account winter/summer time)
   table5_graph$date_local <- with_tz(ymd_hms(table5_graph$end_position,tz="Etc/GMT-1"),"Europe/Andorra")
   
-  #TODO substituir begin_position(?) per date_local!
-  
+
   proc.time()-ptm
+  
   
   #...6: Utils ----
   lastUpdate <- max(last_obs$date)
@@ -565,27 +574,29 @@ update_raven <- function(){
   
   #number of hours since last update
   count_last_update <- as.numeric(difftime(now(),lastUpdate,units="hours"))
-    
+  
   # should we show "No data" page?
   old_data_bool <- ifelse(count_last_update>=margin_old_data,TRUE,FALSE)
-    
+  
   # message to show after 3h with no new data
   OldDataMessage_CAT <- "Per problemes t&egrave;cnics no estem rebent dades en temps real"
   OldDataMessage_EN <- "Due to technical issues we are not receiving real time data"
   OldDataMessage_FR <- "En raison de probl&egrave;mes techniques, nous ne recevons pas de donn&eacute;es en temps r&eacute;el"
   
   #. . . . . mails----
-  previous_count <- dbReadTable(con,"web_utils") %>% select(count_h)
-  if(count_h>margin_mail){
-    # we are not receiving new data
-    # send email type_of_email="no_data"
-    send_email("no_data")
-  }
-  if(count_last_update<previous_count){
-    # we are receiving data again (and were not receiving data on the previous hour)
-    # send email type_of_email="restablished"
-    send_email("restablished")
-  }
+  # previous_count <- dbReadTable(con,"web_utils") %>% select(count_h) %>% slice(1) %>% pull()
+  
+
+  # if((previous_count>margin_mail) & (previous_count<(margin_mail+1))){
+  #   # we are not receiving new data
+  #   # send email type_of_email="no_data"
+  #   send_email("no_data")
+  # }
+  # if((count_last_update<previous_count) & (count_last_update>=1)){
+  #   # we are receiving data again (and were not receiving data on the previous hour)
+  #   # send email type_of_email="restablished"
+  #   send_email("restablished")
+  # }
 
   
   # Temperature inversion
@@ -631,12 +642,12 @@ update_raven <- function(){
   # + station worst index
   # + global worst of all stations
   
-  #TODO amagar mobil quan no estigui operativa
-  # -> no cal perque no tenim dades antigues de les mobils
-  
+
   daily_maxs <- index_poll %>% group_by(day=as.Date(date)) %>% 
                                group_by(station,.add=TRUE) %>% 
-                               dplyr::summarise(across(index_SO2:aqi,max,na.rm=T))
+                               # dplyr::summarise(across(index_SO2:aqi,max,na.rm=T))
+                               # dplyr::summarise(across(index_O3:aqi,max,na.rm=T))
+                               dplyr::summarise(across(c(index_O3,index_SO2,index_NO2,index_CO,index_PM2.5,index_PM10,aqi),max,na.rm=T))
   
   daily_maxs <- daily_maxs %>% pivot_longer(cols=starts_with("index"),
                                              names_to="pollutant",
@@ -775,47 +786,50 @@ update_raven <- function(){
   
   #...With DBI----
   # filter stations in observing_capabilities
-  Andorra_to_observations <- table5 %>% dplyr::filter(sampling_point_id %in% observing_capabilities$sampling_point_id)
+  # Andorra_to_observations <- table5 %>% dplyr::filter(sampling_point_id %in% observing_capabilities$sampling_point_id)
+  # 
+  # df_obs <- dbReadTable(con, "observations") %>% select(-id)
+  # 
+  # #difference between Andorra_to_observations and df_all: append only rows not found in df_all
+  # # Andorra_append <- Andorra_to_observations %>% anti_join(df_obs)
+  # Andorra_append <- anti_join(Andorra_to_observations,df_obs, by=c("sampling_point_id",
+  #                                                                  "begin_position","end_position",
+  #                                                                  "value","verification_flag",
+  #                                                                  "validation_flag"))
+  # 
+  # #assign id numer to each row starting from last id in observations table
+  # # Andorra_append$id <- seq(max(df_obs$id)+1,max(df_obs$id)+nrow(Andorra_append))
+  # 
+  # new_observations <- full_join(df_obs,Andorra_append)
+  # 
+  # #change NAs to -999
+  # new_observations[is.na(new_observations$value),"value"] <- -999
+  # new_observations[is.na(new_observations$import_value),"import_value"] <- -999
+  # # #change NAs to -9900
+  # new_observations[is.na(new_observations$value),"value"] <- -9900
+  # new_observations[is.na(new_observations$import_value),"import_value"] <- -9900
   
-  df_obs <- dbReadTable(con, "observations") %>% select(-id)
-  
-  #difference between Andorra_to_observations and df_all: append only rows not found in df_all
-  # Andorra_append <- Andorra_to_observations %>% anti_join(df_obs)
-  Andorra_append <- anti_join(Andorra_to_observations,df_obs, by=c("sampling_point_id",
-                                                                   "begin_position","end_position",
-                                                                   "value","verification_flag",
-                                                                   "validation_flag"))
-  
-  #assign id numer to each row starting from last id in observations table
-  # Andorra_append$id <- seq(max(df_obs$id)+1,max(df_obs$id)+nrow(Andorra_append))
-  
-  new_observations <- full_join(df_obs,Andorra_append)
-  
-  #change NAs to -999
-  new_observations[is.na(new_observations$value),"value"] <- -999
-  new_observations[is.na(new_observations$import_value),"import_value"] <- -999
-  
-  
-  new_observations$validation_flag <- as.integer(new_observations$validation_flag)
-  new_observations$verification_flag <- as.integer(new_observations$verification_flag)
-  
-  
-  # keep validated data in case of duplication
-  new_observations <- new_observations %>% group_by(end_position) %>% 
-                                          group_by(sampling_point_id,.add=T) %>% 
-                                          slice(which.min(!is.na(verification_flag)))
-  
-  new_observations <- distinct(new_observations)
-  
-  #assign id column
-  new_observations <- tibble::rowid_to_column(new_observations,"id")
-  
-  
-  # append new rows to observations table in Raven
-  #this takes around 7 seconds...
-  # dbWriteTable(con,"observations",new_observations,overwrite=TRUE)
-  dbWriteTable(con,"observations",new_observations,overwrite=TRUE,field.types=c(value="numeric(255,5)",import_value="numeric(255,5)"))
-  
+  # 
+  # new_observations$validation_flag <- as.integer(new_observations$validation_flag)
+  # new_observations$verification_flag <- as.integer(new_observations$verification_flag)
+  # 
+  # 
+  # # keep validated data in case of duplication
+  # new_observations <- new_observations %>% group_by(end_position) %>% 
+  #                                         group_by(sampling_point_id,.add=T) %>% 
+  #                                         slice(which.min(!is.na(verification_flag)))
+  # 
+  # new_observations <- distinct(new_observations)
+  # 
+  # #assign id column
+  # new_observations <- tibble::rowid_to_column(new_observations,"id")
+  # 
+  # 
+  # # append new rows to observations table in Raven
+  # #this takes around 7 seconds...
+  # # dbWriteTable(con,"observations",new_observations,overwrite=TRUE)
+  # dbWriteTable(con,"observations",new_observations,overwrite=TRUE,field.types=c(value="numeric(255,5)",import_value="numeric(255,5)"))
+  # 
   
 
   
@@ -829,16 +843,16 @@ update_raven <- function(){
     dplyr::filter(web_global==TRUE) %>%
     ungroup()
   
+  #undo html format
+  if(countryAQ$aqi_band_CAT=="Excel&middot;lent"){
+    countryAQ$aqi_band_CAT=="Excel·lent"
+  }
+  
   if(hour(now())==hour_tweet){
-    
-    #undo html format
-    if(countryAQ$aqi_band_CAT=="Excel&middot;lent"){
-      countryAQ$aqi_band_CAT=="Excel·lent"
-    }
     
     tweet <- paste0("La qualitat de l'#aire a #Andorra a les ",hour(now()),":00 és ",
                      countryAQ$aqi_band_CAT," - índex ",floor(countryAQ$aqi),
-                     "/5. (+info aire.ad) #qualitataire")
+                     "/6. (+info aire.ad) #qualitataire")
     
     cat(tweet,file=paste0(tweets_path,"tweet_AQI.txt"))
     
@@ -851,14 +865,25 @@ update_raven <- function(){
   
   
   # RSS ----
-  source("/var/rprojects/RScripts/write_xml.R")
+  source("/var/rprojects/RScripts/write_xml.R", local = T)
   
+  
+  # MAIL ALIVE----
+  # at 8h and 16h (Mon-Fri) send mail to know that this is alive
+  if(hour(now()) %in% c(8,16)){
+    if(!wday(now(),week_start = 1) %in% c(6,7)){
+      send_email("alive",
+                 paste0("La qualitat de l'aire a Andorra a les ",hour(now()),":00 és ",
+                        countryAQ$aqi_band_CAT," - índex ",floor(countryAQ$aqi),"/6."))
+    }
+  }
   
   
   # POLLEN ----
-  if(FALSE){
-    update_pollen(con)
-  }
+  # if(FALSE){
+    # update_pollen(con)
+  # }
+  update_pollen(con)
   
   
 
@@ -875,21 +900,23 @@ update_raven <- function(){
 
 
 # RUN the update function ----
+print(Sys.time())
 t <- try(update_raven())
+print(Sys.time())
 
 # if the update had errors, run the following
 if("try-error" %in% class(t)){
-  
+
   # change table_out$error_script
   table_out <- read.csv("/var/rprojects/Projects/AireAD/table_errors.csv")
-  table_out[nrow(table_out,"error_script")] <- TRUE
-  
+  table_out[nrow(table_out),"error_script"] <- TRUE
+
   #overwrite table
-  write.table(table_out, file = "/var/rprojects/Projects/AireAD/table_errors.csv", sep=",")
-  
+  write.table(table_out, file = "/var/rprojects/Projects/AireAD/table_errors.csv", sep=",", row.names=F)
+
   # send mail letting us know that the script failed
   send_email("fail")
-  
-  #TODO append last row(s) to email
-  
-} 
+
+  #TODO append error to email
+
+}
